@@ -42,10 +42,13 @@ export default function Leaderboard() {
         width: '100%',
         borderRadius: 18,
         border: '1px solid rgba(148, 163, 184, 0.2)',
-        background: 'rgba(15, 23, 42, 0.55)',
+        background: 'linear-gradient(150deg, rgba(30, 41, 59, 0.78), rgba(15, 23, 42, 0.88))',
         padding: '18px 20px',
         color: '#e2e8f0',
         boxShadow: 'inset 0 0 0 1px rgba(15, 23, 42, 0.45)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
       }}
     >
       <div style={{ fontWeight: 700, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -57,7 +60,17 @@ export default function Leaderboard() {
       ) : rows.length === 0 ? (
         <div style={{ fontSize: 13, opacity: 0.65 }}>Aún sin partidas registradas.</div>
       ) : (
-        <ol style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <ol
+          style={{
+            margin: 0,
+            paddingLeft: 20,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            maxHeight: 240,
+            overflowY: 'auto',
+          }}
+        >
           {rows.map((r, i) => (
             <li key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
               <span style={{ fontWeight: i === 0 ? 700 : 500 }}>{r.winner_name}</span>

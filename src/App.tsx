@@ -120,6 +120,16 @@ export default function App() {
   const [mods, setMods] = useState<Mod[]>(['PORTALS']);
   const [obstaclePct, setObstaclePct] = useState(5);
   const [gameOverMsg, setGameOverMsg] = useState<string | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === 'undefined' ? 0 : window.innerWidth,
+  );
+  useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  const isCompactLayout = viewportWidth < 1100;
+  const isStackedLayout = viewportWidth < 820;
 
   const pageBackground = 'radial-gradient(125deg, #020617 10%, #0f172a 45%, #1e293b 100%)';
   const cardBase: CSSProperties = {
@@ -174,11 +184,12 @@ export default function App() {
 
     canvas.width = state.w * CELL_SIZE;
     canvas.height = state.h * CELL_SIZE;
-    const scale = Math.min(
-      (window.innerWidth * 0.85) / canvas.width,
-      (window.innerHeight * 0.7) / canvas.height,
-      1,
-    );
+    const parent = canvas.parentElement;
+    const availableWidth = parent ? parent.clientWidth - 16 : window.innerWidth * 0.85;
+    const availableHeight = parent
+      ? parent.clientHeight - 16
+      : window.innerHeight * 0.7;
+    const scale = Math.min(availableWidth / canvas.width, availableHeight / canvas.height, 1);
     canvas.style.width = `${canvas.width * scale}px`;
     canvas.style.height = `${canvas.height * scale}px`;
 
@@ -528,35 +539,57 @@ export default function App() {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        padding: '32px 16px 48px',
+        padding: isStackedLayout ? '24px 16px 36px' : '32px 16px 48px',
         boxSizing: 'border-box',
-        gap: 24,
+        gap: isStackedLayout ? 18 : 24,
       }}
     >
-      <HUD
-        seed={gameSeed}
-        isHost={isHost}
-        mods={mods}
-        players={players.map(({ id, name, color }) => ({ id, name, color }))}
-      />
+      {isStackedLayout ? (
+        <div
+          style={{
+            width: 'min(1180px, 100%)',
+            display: 'flex',
+            justifyContent: 'center',
+          }}
+        >
+          <HUD
+            seed={gameSeed}
+            isHost={isHost}
+            mods={mods}
+            players={players.map(({ id, name, color }) => ({ id, name, color }))}
+            floating={false}
+          />
+        </div>
+      ) : (
+        <HUD
+          seed={gameSeed}
+          isHost={isHost}
+          mods={mods}
+          players={players.map(({ id, name, color }) => ({ id, name, color }))}
+          floating
+        />
+      )}
 
       <div
         style={{
           width: 'min(1180px, 100%)',
           display: 'flex',
-          flexWrap: 'wrap',
-          gap: 24,
-          justifyContent: 'center',
+          flexDirection: isStackedLayout ? 'column' : 'row',
+          flexWrap: isStackedLayout ? 'nowrap' : 'wrap',
+          alignItems: isStackedLayout ? 'stretch' : 'flex-start',
+          gap: isStackedLayout ? 18 : 24,
         }}
       >
         <div
           style={{
             ...cardBase,
-            flex: '1 1 680px',
-            maxWidth: '820px',
+            flex: isStackedLayout ? '1 1 100%' : '1 1 640px',
+            maxWidth: isStackedLayout ? '100%' : '820px',
+            width: '100%',
+            margin: isStackedLayout ? '0 auto' : undefined,
             display: 'flex',
             flexDirection: 'column',
-            gap: 24,
+            gap: isStackedLayout ? 20 : 24,
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -735,17 +768,56 @@ export default function App() {
             </div>
           </div>
 
-          <canvas
-            ref={canvasRef}
+          <div
             style={{
-              alignSelf: 'center',
+              position: 'relative',
               borderRadius: 24,
               border: '1px solid rgba(148, 163, 184, 0.25)',
-              background: 'rgba(2, 6, 23, 0.9)',
+              background: 'radial-gradient(120deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.96))',
               boxShadow: '0 28px 45px -20px rgba(15, 23, 42, 0.9)',
-              maxWidth: '100%',
+              overflow: 'hidden',
+              padding: isCompactLayout ? 12 : 16,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: isCompactLayout ? 260 : 320,
             }}
-          />
+          >
+            {!started && !gameOverMsg && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#cbd5f5',
+                  fontWeight: 600,
+                  fontSize: isCompactLayout ? 13 : 15,
+                  textAlign: 'center',
+                  gap: 6,
+                  padding: '0 36px',
+                  background: 'linear-gradient(140deg, rgba(15, 23, 42, 0.7), rgba(15, 23, 42, 0.55))',
+                  pointerEvents: 'none',
+                }}
+              >
+                <span>La arena aparecerá aquí cuando comience la partida.</span>
+                <span style={{ fontSize: 12, fontWeight: 500, opacity: 0.75 }}>
+                  Pulsa «Iniciar partida» o la barra espaciadora si eres el host.
+                </span>
+              </div>
+            )}
+            <canvas
+              ref={canvasRef}
+              style={{
+                width: '100%',
+                height: 'auto',
+                display: 'block',
+                borderRadius: 18,
+              }}
+            />
+          </div>
 
           <div style={{ fontSize: 13, opacity: 0.75, textAlign: 'center' }}>
             Controles: WASD / Flechas · Reinicio: Espacio (solo host)
@@ -755,8 +827,10 @@ export default function App() {
         <div
           style={{
             ...cardBase,
-            flex: '1 1 260px',
-            maxWidth: 320,
+            flex: isStackedLayout ? '1 1 100%' : '0 0 280px',
+            maxWidth: isStackedLayout ? '100%' : 320,
+            width: '100%',
+            alignSelf: isStackedLayout ? 'stretch' : 'flex-start',
             display: 'flex',
             flexDirection: 'column',
             gap: 16,
@@ -771,7 +845,7 @@ export default function App() {
             }}
             style={{
               ...subtleButtonStyle,
-              alignSelf: 'flex-end',
+              alignSelf: isStackedLayout ? 'flex-start' : 'flex-end',
               fontSize: 12,
             }}
           >
