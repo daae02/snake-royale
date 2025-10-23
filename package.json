@@ -6,6 +6,7 @@
     "deploy": "cross-env GH_PAGES=1 vite build && gh-pages -d dist"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
     "vite": "^7.1.11"
   }
 }

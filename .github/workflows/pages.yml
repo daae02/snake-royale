@@ -1,6 +1,8 @@
 name: Deploy Vite to GitHub Pages
+
 on:
-  push: { branches: [ main ] }
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -8,23 +10,50 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm ci
+        with:
+          node-version: 20
+
+      # Instala EXACTO del lockfile; si falla, usa npm install
+      - name: Install deps
+        run: npm ci || npm install --no-audit --no-fund
+
+      # Si por cualquier motivo faltaran vite o el plugin, instálalos
+      - name: Ensure vite & react plugin present
+        run: |
+          npm ls vite @vitejs/plugin-react || npm i -D vite @vitejs/plugin-react
+
+      # Inyecta secrets como .env (Vite lee VITE_*)
       - name: Create .env from secrets
         run: |
           echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}" >> .env
           echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}" >> .env
-      - name: Build
-        env: { GH_PAGES: 1 }
+
+      - name: Build (Vite)
+        env:
+          GH_PAGES: 1
         run: npm run build
-      - uses: actions/upload-pages-artifact@v3
-        with: { path: ./dist }
+
+      # Diagnóstico útil (verás que index.html apunta a /snake-royale/assets/*.js)
+      - name: Inspect dist
+        run: |
+          ls -lah dist
+          sed -n '1,40p' dist/index.html
+
+      - name: Upload artifact (dist)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
 
   deploy:
     needs: build
