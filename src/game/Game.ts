@@ -138,16 +138,46 @@ export function makeGame(
   const occ = new Set<string>(obstacles.map(o => key(o.x,o.y)));
 
   const food: Pt[] = [];
-  const placeFood = ()=>{
-    let p: Pt; let guard=0;
-    do {
-      p = { x: Math.floor(rnd()*w), y: Math.floor(rnd()*h) };
-      if (hasMod('PORTALS')){ p.x = wrapX(p.x); p.y = wrapY(p.y); }
-      guard++; if (guard>3000) break;
-    } while (occ.has(key(p.x,p.y)) || food.some(f=>eq(f,p)));
-    food.push(p);
+  const occupiedStatic = new Set<string>(occ);
+
+  const randomCell = () => {
+    let x = Math.floor(rnd() * w);
+    let y = Math.floor(rnd() * h);
+    if (hasMod('PORTALS')) {
+      x = wrapX(x);
+      y = wrapY(y);
+    }
+    return { x, y };
   };
-  for (let i=0;i<4;i++) placeFood();
+
+  const cellKey = (p: Pt) => key(p.x, p.y);
+
+  const placeFood = () => {
+    const dynamicBlocked = new Set<string>(occupiedStatic);
+    snakes.forEach((s) => {
+      s.body.forEach((segment) => {
+        dynamicBlocked.add(cellKey(segment));
+      });
+    });
+
+    for (let guard = 0; guard < 4000; guard++) {
+      const p = randomCell();
+      const k = cellKey(p);
+      if (dynamicBlocked.has(k)) continue;
+      if (food.some((f) => eq(f, p))) continue;
+      food.push(p);
+      return true;
+    }
+    return false;
+  };
+
+  const ensureFood = (target: number) => {
+    let safety = 0;
+    while (food.length < target && safety < target * 5) {
+      if (!placeFood()) break;
+      safety += 1;
+    }
+  };
 
   // --- spawns seguros ---
   const RESERVE_LEN = 3, FORWARD_FREE = 3;
@@ -175,6 +205,8 @@ export function makeGame(
       body:[{x:head.x, y:head.y}]
     } as Snake);
   }
+
+  ensureFood(Math.max(4, Math.round(players.length * 1.5)));
 
   // --- step ---
   const step = (inputs:Record<string,Dir>)=>{
@@ -225,6 +257,10 @@ export function makeGame(
         else if (a.body.some(pt=>eq(pt,b.body[0]))) b.alive=false;
       }
     }
+
+    const aliveCount = snakes.filter((s) => s.alive).length || snakes.length || 1;
+    const targetFood = Math.max(4, Math.round(aliveCount * (mods.includes('DOUBLE') ? 2 : 1.4)));
+    ensureFood(targetFood);
 
     return { snakes: JSON.parse(JSON.stringify(snakes)), food:[...food], obstacles:[...obstacles], w, h };
   };

@@ -37,18 +37,31 @@ export default function Leaderboard() {
   }, []);
 
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 10, width: 260, background: '#fff' }}>
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>🏆 Ranking (wins)</div>
+    <div
+      style={{
+        width: '100%',
+        borderRadius: 18,
+        border: '1px solid rgba(148, 163, 184, 0.2)',
+        background: 'rgba(15, 23, 42, 0.55)',
+        padding: '18px 20px',
+        color: '#e2e8f0',
+        boxShadow: 'inset 0 0 0 1px rgba(15, 23, 42, 0.45)',
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 18 }}>🏆</span>
+        <span style={{ fontSize: 15 }}>Ranking (wins)</span>
+      </div>
       {loading ? (
-        <div style={{ fontSize: 12, opacity: 0.7 }}>Cargando…</div>
+        <div style={{ fontSize: 13, opacity: 0.65 }}>Cargando…</div>
       ) : rows.length === 0 ? (
-        <div style={{ fontSize: 12, opacity: 0.7 }}>Aún sin partidas registradas.</div>
+        <div style={{ fontSize: 13, opacity: 0.65 }}>Aún sin partidas registradas.</div>
       ) : (
-        <ol style={{ margin: 0, paddingLeft: 18 }}>
+        <ol style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6 }}>
           {rows.map((r, i) => (
-            <li key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>{r.winner_name}</span>
-              <span style={{ opacity: 0.8 }}>{r.count}</span>
+            <li key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+              <span style={{ fontWeight: i === 0 ? 700 : 500 }}>{r.winner_name}</span>
+              <span style={{ opacity: 0.7 }}>{r.count}</span>
             </li>
           ))}
         </ol>
