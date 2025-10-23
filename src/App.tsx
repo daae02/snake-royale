@@ -107,7 +107,7 @@ export default function App() {
     const list = players.length ? players : [{ id: me.id, name: me.name, color: me.color }];
     const ensureSelf = list.some((p) => p.id === me.id) ? list : [...list, { id: me.id, name: me.name, color: me.color }];
 
-    const w = 32, h = 22;
+    const w = 64, h = 64;
     const startMsg: StartMsg = {
       seed: (seedBase + seedBump) >>> 0,
       w, h, mod,
