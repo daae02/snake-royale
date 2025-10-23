@@ -1,13 +1,18 @@
 import React from 'react';
+import type { Mod } from '../game/types';
 
 export function HUD({
-  seed, isHost, mod, players
+  seed,
+  isHost,
+  mods,
+  players,
 }:{
   seed: number;
   isHost: boolean;
-  mod: string;
-  players: {id:string; name:string}[];
+  mods: Mod[];
+  players: {id:string; name:string; color:string}[];
 }){
+  const modLabel = mods.length ? mods.join(' + ') : '—';
   return (
     <div
       style={{
@@ -17,8 +22,18 @@ export function HUD({
       }}
     >
       <div>Snake Royale — {isHost ? 'HOST' : 'CLIENT'}</div>
-      <div>Seed: {seed} · Mod: {mod}</div>
-      <div>Players: {players.map(p=>p.name).join(', ') || '—'}</div>
+      <div>Seed: {seed} · Mod(s): {modLabel}</div>
+      <div>
+        Players:{' '}
+        {players.length === 0
+          ? '—'
+          : players.map((p, i) => (
+              <span key={p.id} style={{ color: p.color, fontWeight: p.id === players[0].id ? 600 : 500 }}>
+                {i > 0 ? ', ' : ''}
+                {p.name}
+              </span>
+            ))}
+      </div>
     </div>
   );
 }

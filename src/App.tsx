@@ -9,6 +9,32 @@ import { supabase } from './supabaseClient';
 const DEFAULT_TPS = 8;
 const CELL_SIZE = 20;
 const MIN_SPAWN_DISTANCE = 6;
+const COLOR_OPTIONS = [
+  '#e6194b',
+  '#3cb44b',
+  '#ffe119',
+  '#0082c8',
+  '#f58231',
+  '#911eb4',
+  '#46f0f0',
+  '#f032e6',
+  '#d2f53c',
+  '#fabebe',
+  '#008080',
+  '#e6beff',
+  '#aa6e28',
+  '#fffac8',
+  '#800000',
+  '#aaffc3',
+  '#808000',
+  '#ffd8b1',
+  '#000080',
+  '#808080',
+  '#ffffff',
+  '#000000',
+  '#bcf60c',
+  '#9a6324',
+];
 
 const KEY_TO_DIR: Record<string, Dir> = {
   ArrowUp: 'UP',
@@ -35,7 +61,7 @@ type GameRenderState = {
   h: number;
 };
 
-type BroadcastState = GameRenderState & { tick: number; mod: Mod };
+type BroadcastState = GameRenderState & { tick: number; mods: Mod[] };
 
 type EndEventPayload = { winner: string | null; reason: string };
 
@@ -46,14 +72,19 @@ type PresencePayload = PlayerInfo & { joined_at: string };
 export default function App() {
   const [name, setName] = useState(() => localStorage.getItem('name') ?? '');
   const [ready, setReady] = useState(() => Boolean(localStorage.getItem('name')));
-  const [color] = useState(
-    () => '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0'),
-  );
+  const [color, setColor] = useState(() => {
+    const stored = localStorage.getItem('color');
+    if (stored && COLOR_OPTIONS.includes(stored)) {
+      return stored;
+    }
+    return COLOR_OPTIONS[0];
+  });
 
   const playerId = useMemo(() => crypto.randomUUID(), []);
+  const displayName = useMemo(() => name.trim() || 'anon', [name]);
   const me = useMemo<PlayerInfo>(
-    () => ({ id: playerId, name: name || 'anon', color }),
-    [playerId, name, color],
+    () => ({ id: playerId, name: displayName, color }),
+    [playerId, displayName, color],
   );
 
   const gameId = useMemo(() => new URLSearchParams(location.search).get('g') || 'public', []);
@@ -61,7 +92,23 @@ export default function App() {
   const [seedBump, setSeedBump] = useState(0);
   const [gameSeed, setGameSeed] = useState(seedBase);
 
-  const realtime = useMemo(() => (ready ? joinGameChannel(gameId, me) : null), [ready, gameId, me]);
+  const [realtime, setRealtime] = useState<ReturnType<typeof joinGameChannel> | null>(null);
+  useEffect(() => {
+    if (!ready) return;
+
+    const connection = joinGameChannel(gameId, me);
+    setRealtime(connection);
+
+    return () => {
+      connection.unsubscribe();
+      setRealtime(null);
+    };
+  }, [ready, gameId, playerId]);
+
+  useEffect(() => {
+    if (!ready || !realtime) return;
+    realtime.updatePresence({ name: displayName, color });
+  }, [ready, realtime, displayName, color]);
   const sendStart = realtime?.sendStart ?? null;
   const sendInput = realtime?.sendInput ?? null;
   const sendState = realtime?.sendState ?? null;
@@ -70,7 +117,7 @@ export default function App() {
   const [isHost, setIsHost] = useState(false);
   const [players, setPlayers] = useState<PlayerInfo[]>([]);
   const [started, setStarted] = useState(false);
-  const [mod, setMod] = useState<Mod>('PORTALS');
+  const [mods, setMods] = useState<Mod[]>(['PORTALS']);
   const [obstaclePct, setObstaclePct] = useState(5);
   const [gameOverMsg, setGameOverMsg] = useState<string | null>(null);
 
@@ -131,10 +178,10 @@ export default function App() {
 
   const initFromStart = useCallback(
     (msg: StartMsg) => {
-      const { seed, w, h, mod: nextMod, players: startPlayers } = msg;
-      simRef.current = makeGame(seed, w, h, startPlayers, nextMod, obstaclePct / 100, MIN_SPAWN_DISTANCE);
+      const { seed, w, h, mods: nextMods, players: startPlayers } = msg;
+      simRef.current = makeGame(seed, w, h, startPlayers, nextMods, obstaclePct / 100, MIN_SPAWN_DISTANCE);
       setStarted(true);
-      setMod(nextMod);
+      setMods(nextMods);
       setGameSeed(seed);
       setGameOverMsg(null);
 
@@ -155,25 +202,26 @@ export default function App() {
 
   const handleStartGame = useCallback(() => {
     if (!sendStart) return;
+    if (mods.length === 0) return;
 
     const presentPlayers = players.length ? players : [me];
     const ensureSelf = presentPlayers.some((p) => p.id === me.id)
       ? presentPlayers
       : [...presentPlayers, me];
 
-    const w = 64;
-    const h = 64;
+    const w = 90;
+    const h = 30;
     const startMsg: StartMsg = {
       seed: (seedBase + seedBump) >>> 0,
       w,
       h,
-      mod,
+      mods,
       players: ensureSelf.map((p) => ({ id: p.id, name: p.name, color: p.color })),
     };
 
     sendStart(startMsg);
     initFromStart(startMsg);
-  }, [sendStart, players, me, seedBase, seedBump, mod, initFromStart]);
+  }, [sendStart, players, me, seedBase, seedBump, mods, initFromStart]);
 
   useEffect(() => {
     if (!realtime) return;
@@ -208,6 +256,7 @@ export default function App() {
       const detail = (event as CustomEvent<BroadcastState>).detail;
       tickRef.current = detail.tick;
       drawState(detail);
+      setMods(detail.mods);
     };
 
     window.addEventListener('NET_START', handleStart);
@@ -263,7 +312,7 @@ export default function App() {
       const aliveSnakes = state.snakes.filter((snake) => snake.alive);
       if (aliveSnakes.length <= 1) {
         const winner = aliveSnakes[0];
-        sendState({ tick: tickRef.current, ...state, mod });
+        sendState({ tick: tickRef.current, ...state, mods });
         sendEnd({ winner: winner?.name ?? null, reason: aliveSnakes.length === 1 ? 'último en pie' : 'todos muertos' });
         setStarted(false);
 
@@ -273,6 +322,7 @@ export default function App() {
             winner_id: winner.id,
             winner_name: winner.name,
             players: state.snakes.map(({ id, name, color }) => ({ id, name, color })),
+            mod: mods.join('+'),
           };
 
           void supabase
@@ -286,10 +336,10 @@ export default function App() {
         return;
       }
 
-      sendState({ tick: tickRef.current, ...state, mod });
+      sendState({ tick: tickRef.current, ...state, mods });
       drawState(state);
 
-      const rate = mod === 'FAST' ? 12 : DEFAULT_TPS;
+      const rate = mods.includes('FAST') ? 12 : DEFAULT_TPS;
       timeoutId = setTimeout(runLoop, 1000 / rate);
     };
 
@@ -299,7 +349,22 @@ export default function App() {
         clearTimeout(timeoutId);
       }
     };
-  }, [started, isHost, mod, sendState, sendEnd, drawState, gameId]);
+  }, [started, isHost, mods, sendState, sendEnd, drawState, gameId]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const takenByOthers = players.some((p) => p.id !== me.id && p.color === color);
+    if (!takenByOthers) return;
+
+    const fallback = COLOR_OPTIONS.find((option) => !players.some((p) => p.id !== me.id && p.color === option));
+    if (fallback && fallback !== color) {
+      setColor(fallback);
+    }
+  }, [players, ready, me.id, color]);
+
+  useEffect(() => {
+    localStorage.setItem('color', color);
+  }, [color]);
 
   if (!ready) {
     return (
@@ -320,6 +385,25 @@ export default function App() {
           placeholder="Tu nombre…"
           style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 8, width: 260 }}
         />
+        <div style={{ marginTop: 12, width: 260 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Elige tu color</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 6 }}>
+            {COLOR_OPTIONS.map((option) => (
+              <button
+                key={option}
+                onClick={() => setColor(option)}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 6,
+                  border: option === color ? '3px solid #000' : '1px solid #999',
+                  background: option,
+                  cursor: 'pointer',
+                }}
+              />
+            ))}
+          </div>
+        </div>
         <button
           onClick={() => {
             if (!name.trim()) return;
@@ -350,24 +434,49 @@ export default function App() {
         gap: 8,
       }}
     >
-      <HUD seed={gameSeed} isHost={isHost} mod={mod} players={players.map(({ id, name }) => ({ id, name }))} />
+      <HUD
+        seed={gameSeed}
+        isHost={isHost}
+        mods={mods}
+        players={players.map(({ id, name, color }) => ({ id, name, color }))}
+      />
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', minHeight: 40 }}>
         {isHost ? (
           <>
-            <button onClick={handleStartGame} disabled={started}>
+            <button onClick={handleStartGame} disabled={started || mods.length === 0}>
               Start (Espacio)
             </button>
 
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              Modo
-              <select value={mod} onChange={(e) => setMod(e.target.value as Mod)} disabled={started}>
-                <option value="PORTALS">PORTALS (infinito)</option>
-                <option value="FAST">FAST</option>
-                <option value="DOUBLE">DOUBLE</option>
-                <option value="TOXIC">TOXIC</option>
-              </select>
-            </label>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              {(['PORTALS', 'FAST', 'DOUBLE', 'TOXIC'] as Mod[]).map((option) => {
+                const checked = mods.includes(option);
+                const label =
+                  option === 'PORTALS'
+                    ? 'PORTALS (infinito)'
+                    : option === 'FAST'
+                    ? 'FAST'
+                    : option === 'DOUBLE'
+                    ? 'DOUBLE'
+                    : 'TOXIC';
+                return (
+                  <label key={option} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setMods((prev) => {
+                          const next = checked ? prev.filter((m) => m !== option) : [...prev, option];
+                          return next;
+                        });
+                      }}
+                      disabled={started}
+                    />
+                    {label}
+                  </label>
+                );
+              })}
+            </div>
 
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               Obstáculos (%)
@@ -393,7 +502,37 @@ export default function App() {
         {gameOverMsg && <span style={{ marginLeft: 12, opacity: 0.75 }}>{gameOverMsg}</span>}
       </div>
 
-      <canvas ref={canvasRef} />
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+        <div style={{ fontWeight: 600 }}>Tu color</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 6 }}>
+          {COLOR_OPTIONS.map((option) => {
+            const takenByOther = players.some((p) => p.id !== me.id && p.color === option);
+            const isSelected = option === color;
+            return (
+              <button
+                key={option}
+                onClick={() => {
+                  if (takenByOther) return;
+                  setColor(option);
+                }}
+                disabled={takenByOther}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  border: isSelected ? '3px solid #000' : '1px solid #999',
+                  background: option,
+                  cursor: takenByOther ? 'not-allowed' : 'pointer',
+                  opacity: takenByOther ? 0.4 : 1,
+                }}
+                title={takenByOther ? 'Ocupado por otro jugador' : 'Disponible'}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      <canvas ref={canvasRef} style={{ maxHeight: '75vh', width: 'auto' }} />
       <div style={{ fontSize: 12, opacity: 0.7 }}>
         Controles: WASD / Flechas · Reiniciar: Espacio (host) · gameId: {gameId}
       </div>
@@ -413,7 +552,7 @@ export default function App() {
         <button
           onClick={async () => {
             if (!confirm('¿Borrar todas las partidas del ranking?')) return;
-            await supabase.from('matches').delete().neq('id', '');
+            await supabase.from('matches').delete().gt('created_at', '1970-01-01T00:00:00Z');
             window.dispatchEvent(new CustomEvent('LB_REFRESH'));
           }}
           style={{ fontSize: 12 }}
