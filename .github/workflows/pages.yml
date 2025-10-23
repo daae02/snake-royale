@@ -24,16 +24,16 @@ jobs:
         with:
           node-version: 20
 
-      # Instala EXACTO del lockfile; si falla, usa npm install
+      # Instala EXACTO del lockfile; si falla, fallback a install
       - name: Install deps
         run: npm ci || npm install --no-audit --no-fund
 
-      # Si por cualquier motivo faltaran vite o el plugin, instálalos
-      - name: Ensure vite & react plugin present
+      # 🔒 Garantiza que existan runtime y herramientas (si algo faltó del lockfile)
+      - name: Ensure build deps
         run: |
-          npm ls vite @vitejs/plugin-react || npm i -D vite @vitejs/plugin-react
+          npm ls react react-dom vite @vitejs/plugin-react || \
+          npm i -D vite @vitejs/plugin-react && npm i react react-dom
 
-      # Inyecta secrets como .env (Vite lee VITE_*)
       - name: Create .env from secrets
         run: |
           echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}" >> .env
@@ -44,14 +44,12 @@ jobs:
           GH_PAGES: 1
         run: npm run build
 
-      # Diagnóstico útil (verás que index.html apunta a /snake-royale/assets/*.js)
       - name: Inspect dist
         run: |
           ls -lah dist
-          sed -n '1,40p' dist/index.html
+          sed -n '1,50p' dist/index.html
 
-      - name: Upload artifact (dist)
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
 
