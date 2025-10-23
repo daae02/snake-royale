@@ -9,39 +9,41 @@ import { supabase } from './supabaseClient';
 const DEFAULT_TPS = 8;
 
 export default function App() {
-  // Nombre editable y persistente (antes de crear el canal)
+  // nombre y color del jugador (persistente)
   const [name, setName] = useState(() => localStorage.getItem('name') || '');
-  const [color] = useState(() => '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0'));
-  const gameId = useMemo(() => new URLSearchParams(location.search).get('g') || 'public', []);
   const [ready, setReady] = useState(() => Boolean(localStorage.getItem('name')));
+  const [color] = useState(() => '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0'));
+  const playerId = useMemo(() => crypto.randomUUID(), []);
+  const me = useMemo(() => ({ id: playerId, name: name || 'anon', color }), [playerId, name, color]);
 
-  // hasta que el usuario confirme el nombre, no abrimos canal
-  const me = useMemo(() => ({ id: crypto.randomUUID(), name: name || 'anon', color }), [name, color]);
+  // sala
+  const gameId = useMemo(() => new URLSearchParams(location.search).get('g') || 'public', []);
+  const seedBase = useMemo(() => (Date.now() % 2147483647) >>> 0, []);
+  const [seedBump, setSeedBump] = useState(0);
+  const [gameSeed, setGameSeed] = useState(seedBase);
 
-  // seed base (actualizada en START real)
-  const seedBase = useMemo(() => Date.now() % 2147483647, []);
-  const [gameSeed, setGameSeed] = useState<number>(seedBase);
-
-  // canal realtime (crearlo cuando esté listo el nombre)
-  const realtime = useMemo(() => ready ? joinGameChannel(gameId, me) : null, [ready, gameId, me]);
+  // realtime (solo cuando ya hay nombre)
+  const realtime = useMemo(() => (ready ? joinGameChannel(gameId, me) : null), [ready, gameId, me]);
   const sendStart = realtime?.sendStart!;
   const sendInput = realtime?.sendInput!;
   const sendState = realtime?.sendState!;
-  const sendEnd   = realtime?.sendEnd!;
+  const sendEnd = realtime?.sendEnd!;
 
-  // estado de UI / sim
+  // estado de juego/UI
   const [isHost, setIsHost] = useState(false);
   const [players, setPlayers] = useState<{ id: string; name: string; color: string }[]>([]);
   const [started, setStarted] = useState(false);
-  const [mod, setMod] = useState<Mod>('DOUBLE');
+  const [mod, setMod] = useState<Mod>('PORTALS');     // infinito por defecto
+  const [obstaclePct, setObstaclePct] = useState(5);  // % del tablero
   const [gameOverMsg, setGameOverMsg] = useState<string | null>(null);
 
+  // refs para simulación
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<ReturnType<typeof makeGame> | null>(null);
   const inputsRef = useRef<Record<string, Dir>>({});
   const tickRef = useRef(0);
 
-  // PRESENCE → host y jugadores
+  // presencia: determina host (primer join por joined_at)
   useEffect(() => {
     if (!realtime) return;
     const onPresence = (e: any) => {
@@ -53,10 +55,9 @@ export default function App() {
     return () => window.removeEventListener('PRESENCE', onPresence as any);
   }, [realtime, me.id]);
 
-  // Inicializa desde START
   function initFromStart(msg: StartMsg) {
     const { seed, w, h, mod, players } = msg;
-    simRef.current = makeGame(seed, w, h, players, mod);
+    simRef.current = makeGame(seed, w, h, players, mod, obstaclePct / 100, 6); // 6 = minSpawnDist
     setStarted(true);
     setMod(mod);
     setGameSeed(seed);
@@ -70,64 +71,14 @@ export default function App() {
     tickRef.current = 0;
   }
 
-  // Recibir START
+  // recibir START/END/STATE/INPUT
   useEffect(() => {
     const onStart = (e: any) => initFromStart(e.detail as StartMsg);
-    window.addEventListener('NET_START', onStart as any);
-    return () => window.removeEventListener('NET_START', onStart as any);
-  }, []);
-
-  // Recibir END
-  useEffect(() => {
     const onEnd = (e: any) => {
       const { winner, reason } = e.detail as { winner: string | null; reason: string };
       setStarted(false);
       setGameOverMsg(winner ? `🏁 Ganó ${winner} (${reason})` : `Fin de partida (${reason})`);
     };
-    window.addEventListener('NET_END', onEnd as any);
-    return () => window.removeEventListener('NET_END', onEnd as any);
-  }, []);
-
-  // Host: START + init local
-  const handleStart = () => {
-    if (!realtime) return;
-    const list = players.length ? players : [{ id: me.id, name: me.name, color: me.color }];
-    const ensureSelf = list.some((p) => p.id === me.id) ? list : [...list, { id: me.id, name: me.name, color: me.color }];
-
-    const mods: Mod[] = ['FAST', 'PORTALS', 'DOUBLE', 'TOXIC'];
-    const chosen = mods[seedBase % mods.length];
-    const w = 32, h = 22;
-
-    const startMsg: StartMsg = {
-      seed: seedBase,
-      w, h, mod: chosen,
-      players: ensureSelf.map((p) => ({ id: p.id, name: p.name, color: p.color })),
-    };
-
-    sendStart(startMsg);
-    initFromStart(startMsg); // el host no recibe eco
-  };
-
-  // Teclado: juego o reinicio con ESPACIO (host)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !started && isHost && ready) {
-        e.preventDefault();
-        handleStart();
-        return;
-      }
-      const map: any = { ArrowUp:'UP', ArrowRight:'RIGHT', ArrowDown:'DOWN', ArrowLeft:'LEFT', w:'UP', d:'RIGHT', s:'DOWN', a:'LEFT' };
-      const dir = map[e.key];
-      if (!dir || !realtime) return;
-      sendInput({ id: me.id, dir, tick: tickRef.current });
-      if (isHost) inputsRef.current[me.id] = dir; // eco local del host
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [started, isHost, ready, realtime, sendInput, me.id]);
-
-  // Red → INPUT / STATE
-  useEffect(() => {
     const onNetInput = (e: any) => {
       const { id, dir } = e.detail;
       inputsRef.current[id] = dir;
@@ -137,125 +88,209 @@ export default function App() {
       tickRef.current = st.tick;
       draw(st);
     };
+
+    window.addEventListener('NET_START', onStart as any);
+    window.addEventListener('NET_END', onEnd as any);
     window.addEventListener('NET_INPUT', onNetInput as any);
     window.addEventListener('NET_STATE', onNetState as any);
     return () => {
+      window.removeEventListener('NET_START', onStart as any);
+      window.removeEventListener('NET_END', onEnd as any);
       window.removeEventListener('NET_INPUT', onNetInput as any);
       window.removeEventListener('NET_STATE', onNetState as any);
     };
-  }, []);
+  }, [obstaclePct]);
 
-  // Bucle del host (simula, emite estado y FIN)
+  // host: iniciar
+  const handleStart = () => {
+    if (!realtime) return;
+    const list = players.length ? players : [{ id: me.id, name: me.name, color: me.color }];
+    const ensureSelf = list.some((p) => p.id === me.id) ? list : [...list, { id: me.id, name: me.name, color: me.color }];
+
+    const w = 32, h = 22;
+    const startMsg: StartMsg = {
+      seed: (seedBase + seedBump) >>> 0,
+      w, h, mod,
+      players: ensureSelf.map((p) => ({ id: p.id, name: p.name, color: p.color })),
+    };
+    sendStart(startMsg);
+    initFromStart(startMsg); // el host no recibe eco
+  };
+
+  // teclado: movimiento y reinicio con Espacio (host)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !started && isHost && ready) {
+        e.preventDefault();
+        handleStart();
+        return;
+      }
+      const map: any = { ArrowUp: 'UP', ArrowRight: 'RIGHT', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', w: 'UP', d: 'RIGHT', s: 'DOWN', a: 'LEFT' };
+      const dir = map[e.key];
+      if (!dir || !realtime) return;
+      sendInput({ id: me.id, dir, tick: tickRef.current });
+      if (isHost) inputsRef.current[me.id] = dir; // eco local del host
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [started, isHost, ready, realtime, sendInput, me.id]);
+
+  // bucle del host
   useEffect(() => {
     if (!started) return;
     let handle: any;
+
     const loop = () => {
       if (isHost && simRef.current) {
         tickRef.current++;
         const st = simRef.current.step(inputsRef.current);
         inputsRef.current = {};
-        // Fin: 0 o 1 vivos => END + persistencia
-        const alive = st.snakes.filter((s: any) => s.alive).length;
-        if (alive <= 1) {
-          const winnerSnake = st.snakes.find((s: any) => s.alive);
-          const winnerName = winnerSnake?.name ?? null;
 
+        const aliveSnakes = st.snakes.filter((s: any) => s.alive);
+        if (aliveSnakes.length <= 1) {
+          const winner = aliveSnakes[0];
           sendState({ tick: tickRef.current, ...st, mod });
-          sendEnd({ winner: winnerName, reason: alive === 1 ? 'último en pie' : 'todos muertos' });
+          sendEnd({ winner: winner?.name ?? null, reason: aliveSnakes.length === 1 ? 'último en pie' : 'todos muertos' });
           setStarted(false);
 
-          // Guardar en Supabase (no esperamos la promesa para no frenar la UI)
-          if (winnerName) {
+          // persistencia (solo host)
+          if (winner) {
             const payload = {
               game_id: gameId,
-              winner_id: winnerSnake.id,
-              winner_name: winnerName,
+              winner_id: winner.id,
+              winner_name: winner.name,
               players: st.snakes.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
             };
-            supabase.from('matches').insert(payload).then(() => {}).catch(() => {});
+            supabase.from('matches').insert(payload).then(() => {
+              window.dispatchEvent(new CustomEvent('LB_REFRESH'));
+            }).catch(() => {});
           }
           return;
         }
+
         sendState({ tick: tickRef.current, ...st, mod });
         draw({ tick: tickRef.current, ...st, mod });
       }
       const rate = mod === 'FAST' ? 12 : DEFAULT_TPS;
       handle = setTimeout(loop, 1000 / rate);
     };
+
     loop();
     return () => clearTimeout(handle);
   }, [started, isHost, mod, gameId]);
 
-  // Render
+  // pantalla de nombre
   if (!ready) {
     return (
-      <div style={{ height:'100vh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:10 }}>
-        <div style={{ fontWeight:700 }}>Elige tu nombre</div>
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontWeight: 700 }}>Elige tu nombre</div>
         <input
           value={name}
-          onChange={e => setName(e.target.value)}
+          onChange={(e) => setName(e.target.value)}
           placeholder="Tu nombre…"
-          style={{ padding:'8px 10px', border:'1px solid #ccc', borderRadius:8, width:260 }}
+          style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 8, width: 260 }}
         />
         <button
-          onClick={() => { if (!name.trim()) return; localStorage.setItem('name', name.trim()); setReady(true); }}
+          onClick={() => {
+            if (!name.trim()) return;
+            localStorage.setItem('name', name.trim());
+            setReady(true);
+          }}
           disabled={!name.trim()}
-          style={{ padding:'6px 12px' }}
+          style={{ padding: '6px 12px' }}
         >
           Continuar
         </button>
-        <div style={{ marginTop:16 }}><Leaderboard/></div>
+        <div style={{ marginTop: 16 }}><Leaderboard /></div>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        width: '100vw', height: '100vh',
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', gap: 8,
-      }}
-    >
+    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
       <HUD seed={gameSeed} isHost={isHost} mod={mod} players={players.map((p) => ({ id: p.id, name: p.name }))} />
 
-      {!started && (
-        <div style={{ display:'flex', gap:10, alignItems:'center', minHeight:40 }}>
-          {isHost ? <button onClick={handleStart}>Start (Espacio)</button> : <span>Esperando START del host…</span>}
-          {gameOverMsg && <span style={{ marginLeft: 12, opacity: 0.75 }}>{gameOverMsg}</span>}
-        </div>
-      )}
+      {/* Controles superiores */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', minHeight: 40 }}>
+        {isHost ? (
+          <>
+            <button onClick={handleStart} disabled={started}>Start (Espacio)</button>
+
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              Modo
+              <select value={mod} onChange={(e) => setMod(e.target.value as Mod)} disabled={started}>
+                <option value="PORTALS">PORTALS (infinito)</option>
+                <option value="FAST">FAST</option>
+                <option value="DOUBLE">DOUBLE</option>
+                <option value="TOXIC">TOXIC</option>
+              </select>
+            </label>
+
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              Obstáculos (%)
+              <input
+                type="number" min={0} max={25}
+                value={obstaclePct}
+                onChange={(e) => setObstaclePct(Math.max(0, Math.min(25, Number(e.target.value) || 0)))}
+                disabled={started}
+                style={{ width: 60 }}
+              />
+            </label>
+
+            <button onClick={() => setSeedBump((x) => x + 1)} disabled={started}>Re-generar mapa</button>
+          </>
+        ) : (
+          <span>Esperando START del host…</span>
+        )}
+
+        {gameOverMsg && <span style={{ marginLeft: 12, opacity: 0.75 }}>{gameOverMsg}</span>}
+      </div>
 
       <canvas ref={canvasRef} />
       <div style={{ fontSize: 12, opacity: 0.7 }}>Controles: WASD / Flechas · Reiniciar: Espacio (host) · gameId: {gameId}</div>
 
-      {/* Ranking al pie */}
-      <div style={{ position:'fixed', right:16, bottom:16 }}>
+      {/* Ranking y reset */}
+      <div style={{ position: 'fixed', right: 16, bottom: 16, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'end' }}>
         <Leaderboard />
+        <button
+          onClick={async () => {
+            if (!confirm('¿Borrar todas las partidas del ranking?')) return;
+            await supabase.from('matches').delete().neq('id', '');
+            window.dispatchEvent(new CustomEvent('LB_REFRESH'));
+          }}
+          style={{ fontSize: 12 }}
+        >
+          Reset ranking
+        </button>
       </div>
     </div>
   );
 }
 
-// --------- Draw ----------
+// ---------- draw ----------
 function draw(st: any) {
-  const canvas = (document.querySelector('canvas') as HTMLCanvasElement)!;
-  const ctx = canvas.getContext('2d')!;
-  const cell = 20;
+  const canvas = (document.querySelector('canvas') as HTMLCanvasElement) || ({} as HTMLCanvasElement);
+  const ctx = canvas.getContext('2d');
+  if (!canvas || !ctx) return;
 
+  const cell = 20;
   canvas.width = st.w * cell;
   canvas.height = st.h * cell;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  // fondo cuadriculado suave
   ctx.save(); ctx.globalAlpha = 0.05; ctx.fillStyle = '#000';
   for (let x = 0; x < st.w; x++) for (let y = 0; y < st.h; y++) ctx.fillRect(x * cell, y * cell, cell, cell);
   ctx.restore();
 
+  // obstáculos
   ctx.fillStyle = '#444';
   st.obstacles.forEach((o: any) => ctx.fillRect(o.x * cell, o.y * cell, cell, cell));
 
+  // comida
   st.food.forEach((f: any) => { ctx.fillStyle = '#2ecc71'; ctx.fillRect(f.x * cell + 3, f.y * cell + 3, cell - 6, cell - 6); });
 
+  // serpientes
   st.snakes.forEach((s: any) => {
     ctx.fillStyle = s.color || '#3498db';
     s.body.forEach((b: any, i: number) => {
