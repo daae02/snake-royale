@@ -3,17 +3,6 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "GH_PAGES=1 vite build && gh-pages -d dist"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.76.1",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
-    "@vitejs/plugin-react": "^5.0.4",
-    "typescript": "^5.9.3"
+    "deploy": "cross-env GH_PAGES=1 vite build && gh-pages -d dist"
   }
 }

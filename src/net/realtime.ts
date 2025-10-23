@@ -6,14 +6,7 @@ export function joinGameChannel(gameId: string, me: {id:string;name:string;color
     config: { presence: { key: me.id } }
   });
 
-  // Estado interno (no React)
-  const state = {
-    isHost: false,
-    hostId: null as string | null
-  };
-
   const presenceToArray = (pres:any)=> {
-    // pres = { userId: [ { name,color,joined_at }, ... ], ... }
     return Object.entries(pres).flatMap(([key, items]: any) =>
       items.map((it:any) => ({
         id: key as string,
@@ -27,15 +20,8 @@ export function joinGameChannel(gameId: string, me: {id:string;name:string;color
   channel
     .on('presence', { event: 'sync' }, () => {
       const all = presenceToArray(channel.presenceState());
-      // ordenar por joined_at y en empate por id (tiebreaker estable)
-      all.sort((a,b) => {
-        if (a.joined_at === b.joined_at) return a.id < b.id ? -1 : 1;
-        return a.joined_at < b.joined_at ? -1 : 1;
-      });
-      state.hostId = all[0]?.id ?? null;
-      state.isHost = state.hostId === me.id;
-
-      // Notificar a React
+      // desempate estable
+      all.sort((a,b) => (a.joined_at === b.joined_at) ? (a.id < b.id ? -1 : 1) : (a.joined_at < b.joined_at ? -1 : 1));
       window.dispatchEvent(new CustomEvent('PRESENCE', { detail: all }));
     })
     .on('broadcast', { event: 'START' }, ({ payload }) => {
@@ -47,6 +33,9 @@ export function joinGameChannel(gameId: string, me: {id:string;name:string;color
     .on('broadcast', { event: 'STATE' }, ({ payload }) => {
       window.dispatchEvent(new CustomEvent('NET_STATE', { detail: payload }));
     })
+    .on('broadcast', { event: 'END' }, ({ payload }) => {
+      window.dispatchEvent(new CustomEvent('NET_END', { detail: payload }));
+    })
     .subscribe(async status => {
       if (status === 'SUBSCRIBED') {
         await channel.track({ ...me, joined_at: new Date().toISOString() });
@@ -56,6 +45,7 @@ export function joinGameChannel(gameId: string, me: {id:string;name:string;color
   const sendStart = (payload:StartMsg)=> channel.send({ type:'broadcast', event:'START', payload });
   const sendInput = (payload:any)=> channel.send({ type:'broadcast', event:'INPUT', payload });
   const sendState = (payload:any)=> channel.send({ type:'broadcast', event:'STATE', payload });
+  const sendEnd   = (payload:any)=> channel.send({ type:'broadcast', event:'END',   payload });
 
-  return { channel, state, sendStart, sendInput, sendState };
+  return { channel, sendStart, sendInput, sendState, sendEnd };
 }
