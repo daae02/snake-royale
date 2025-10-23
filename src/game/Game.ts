@@ -53,11 +53,12 @@ export function makeGame(
   w: number,
   h: number,
   players: { id: string; name: string; color: string }[],
-  mod: Mod,
+  mods: Mod[],
   obstacleRatio = 0.05,
   minSpawnDist = 6
 ) {
   const rnd = xorshift32(seed);
+  const hasMod = (m: Mod) => mods.includes(m);
 
   type Cell = { x: number; y: number };
   const DIRS: Record<Dir, Cell> = {
@@ -70,7 +71,7 @@ export function makeGame(
   const wrapY = (y: number) => ((y % h) + h) % h;
   const key = (x: number, y: number) => `${x},${y}`;
   const inside = (x: number, y: number) =>
-    mod === 'PORTALS' ? true : x >= 0 && y >= 0 && x < w && y < h;
+    hasMod('PORTALS') ? true : x >= 0 && y >= 0 && x < w && y < h;
 
   const manhattan = (a: Cell, b: Cell) => {
     // en wrap, la distancia mínima considerando toroidal
@@ -83,7 +84,7 @@ export function makeGame(
     let cx = x, cy = y;
     for (let i = 1; i <= steps; i++) {
       cx += DIRS[dir].x; cy += DIRS[dir].y;
-      if (mod === 'PORTALS') { cx = wrapX(cx); cy = wrapY(cy); }
+      if (hasMod('PORTALS')) { cx = wrapX(cx); cy = wrapY(cy); }
       else if (!inside(cx, cy)) return false;
       if (occ.has(key(cx, cy))) return false;
     }
@@ -95,10 +96,10 @@ export function makeGame(
     let cx = head.x, cy = head.y;
     for (let i = 0; i < len; i++) {
       if (!inside(cx, cy)) return false;
-      const k = key(mod === 'PORTALS' ? wrapX(cx) : cx, mod === 'PORTALS' ? wrapY(cy) : cy);
+      const k = key(hasMod('PORTALS') ? wrapX(cx) : cx, hasMod('PORTALS') ? wrapY(cy) : cy);
       if (occ.has(k)) return false;
       cx += back.x; cy += back.y;
-      if (mod === 'PORTALS') { cx = wrapX(cx); cy = wrapY(cy); }
+      if (hasMod('PORTALS')) { cx = wrapX(cx); cy = wrapY(cy); }
     }
     return true;
   };
@@ -115,7 +116,7 @@ export function makeGame(
       const dir = dirs[(rnd()*4)|0];
       const x = Math.floor(rnd()*w);
       const y = Math.floor(rnd()*h);
-      const head = { x: mod==='PORTALS'?wrapX(x):x, y: mod==='PORTALS'?wrapY(y):y };
+      const head = { x: hasMod('PORTALS')?wrapX(x):x, y: hasMod('PORTALS')?wrapY(y):y };
 
       // separación con otras serpientes ya colocadas
       if (others.some(o => manhattan(o, head) < minSpawnDist)) continue;
@@ -137,16 +138,46 @@ export function makeGame(
   const occ = new Set<string>(obstacles.map(o => key(o.x,o.y)));
 
   const food: Pt[] = [];
-  const placeFood = ()=>{
-    let p: Pt; let guard=0;
-    do {
-      p = { x: Math.floor(rnd()*w), y: Math.floor(rnd()*h) };
-      if (mod==='PORTALS'){ p.x = wrapX(p.x); p.y = wrapY(p.y); }
-      guard++; if (guard>3000) break;
-    } while (occ.has(key(p.x,p.y)) || food.some(f=>eq(f,p)));
-    food.push(p);
+  const occupiedStatic = new Set<string>(occ);
+
+  const randomCell = () => {
+    let x = Math.floor(rnd() * w);
+    let y = Math.floor(rnd() * h);
+    if (hasMod('PORTALS')) {
+      x = wrapX(x);
+      y = wrapY(y);
+    }
+    return { x, y };
   };
-  for (let i=0;i<4;i++) placeFood();
+
+  const cellKey = (p: Pt) => key(p.x, p.y);
+
+  const placeFood = () => {
+    const dynamicBlocked = new Set<string>(occupiedStatic);
+    snakes.forEach((s) => {
+      s.body.forEach((segment) => {
+        dynamicBlocked.add(cellKey(segment));
+      });
+    });
+
+    for (let guard = 0; guard < 4000; guard++) {
+      const p = randomCell();
+      const k = cellKey(p);
+      if (dynamicBlocked.has(k)) continue;
+      if (food.some((f) => eq(f, p))) continue;
+      food.push(p);
+      return true;
+    }
+    return false;
+  };
+
+  const ensureFood = (target: number) => {
+    let safety = 0;
+    while (food.length < target && safety < target * 5) {
+      if (!placeFood()) break;
+      safety += 1;
+    }
+  };
 
   // --- spawns seguros ---
   const RESERVE_LEN = 3, FORWARD_FREE = 3;
@@ -162,9 +193,9 @@ export function makeGame(
     const back = { x: -DIRS[dir].x, y: -DIRS[dir].y };
     let cx=head.x, cy=head.y;
     for (let i=0;i<RESERVE_LEN;i++){
-      occ.add(key(mod==='PORTALS'?wrapX(cx):cx, mod==='PORTALS'?wrapY(cy):cy));
+      occ.add(key(hasMod('PORTALS')?wrapX(cx):cx, hasMod('PORTALS')?wrapY(cy):cy));
       cx += back.x; cy += back.y;
-      if (mod==='PORTALS'){ cx = wrapX(cx); cy = wrapY(cy); }
+      if (hasMod('PORTALS')){ cx = wrapX(cx); cy = wrapY(cy); }
     }
     placedHeads.push(head);
 
@@ -174,6 +205,8 @@ export function makeGame(
       body:[{x:head.x, y:head.y}]
     } as Snake);
   }
+
+  ensureFood(Math.max(4, Math.round(players.length * 1.5)));
 
   // --- step ---
   const step = (inputs:Record<string,Dir>)=>{
@@ -187,17 +220,17 @@ export function makeGame(
       const head = s.body[0];
       let nx = head.x + DIRS[s.dir].x;
       let ny = head.y + DIRS[s.dir].y;
-      if (mod==='PORTALS'){ nx = wrapX(nx); ny = wrapY(ny); }
+      if (hasMod('PORTALS')){ nx = wrapX(nx); ny = wrapY(ny); }
       const next = { x:nx, y:ny };
 
       s.body.unshift(next);
 
       const eatIdx = food.findIndex(f=>eq(f,next));
       if (eatIdx>=0){
-        s.grow += (mod==='TOXIC' ? -1 : 1);
+        s.grow += (hasMod('TOXIC') ? -1 : 1);
         food.splice(eatIdx,1);
         placeFood();
-        if (mod==='DOUBLE') placeFood();
+        if (hasMod('DOUBLE')) placeFood();
       }
 
       if (s.grow>0) s.grow--;
@@ -210,7 +243,7 @@ export function makeGame(
     snakes.forEach(s=>{
       if(!s.alive) return;
       const head = s.body[0];
-      if (walls(head) && mod!=='PORTALS') s.alive=false;
+      if (walls(head) && !hasMod('PORTALS')) s.alive=false;
       if (obstacles.some(o=>eq(o,head))) s.alive=false;
       if (s.body.slice(1).some(b=>eq(b,head))) s.alive=false;
     });
@@ -225,8 +258,12 @@ export function makeGame(
       }
     }
 
+    const aliveCount = snakes.filter((s) => s.alive).length || snakes.length || 1;
+    const targetFood = Math.max(4, Math.round(aliveCount * (mods.includes('DOUBLE') ? 2 : 1.4)));
+    ensureFood(targetFood);
+
     return { snakes: JSON.parse(JSON.stringify(snakes)), food:[...food], obstacles:[...obstacles], w, h };
   };
 
-  return { step, snakes, food, obstacles, w, h, mod };
+  return { step, snakes, food, obstacles, w, h, mods };
 }

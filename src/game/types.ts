@@ -7,6 +7,6 @@ export interface StartMsg {
   seed: number;
   w: number;
   h: number;
-  mod: Mod;
+  mods: Mod[];
   players: { id:string; name:string; color:string }[];
 }
